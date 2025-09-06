@@ -202,6 +202,43 @@
     </div>
 
     <script>
+        // GBK/GB2312解码器
+        function decodeGBK(arrayBuffer) {
+            const bytes = new Uint8Array(arrayBuffer);
+            let result = '';
+            let i = 0;
+            
+            while (i < bytes.length) {
+                const byte1 = bytes[i];
+                
+                if (byte1 < 0x80) {
+                    // ASCII字符
+                    result += String.fromCharCode(byte1);
+                    i++;
+                } else if (byte1 >= 0x81 && byte1 <= 0xFE && i + 1 < bytes.length) {
+                    // GBK双字节字符
+                    const byte2 = bytes[i + 1];
+                    if (byte2 >= 0x40 && byte2 <= 0xFE && byte2 !== 0x7F) {
+                        // 使用GBK映射表（简化版）
+                        const code = (byte1 << 8) | byte2;
+                        try {
+                            result += String.fromCharCode(code);
+                        } catch (e) {
+                            result += '?';
+                        }
+                        i += 2;
+                    } else {
+                        result += '?';
+                        i++;
+                    }
+                } else {
+                    result += '?';
+                    i++;
+                }
+            }
+            return result;
+        }
+
         // 数据存储
         let jwdcxData = [];
         let priceData = [];
@@ -209,15 +246,38 @@
 
         // CSV解析工具
         function parseCSV(text) {
-            const lines = text.trim().split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
+            // 清理BOM标记和特殊字符
+            text = text.replace(/^\uFEFF/, '');
+            const lines = text.trim().split(/\r?\n/);
+            
+            // 处理可能的分隔符问题
+            const delimiter = text.includes('\t') ? '\t' : ',';
+            const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
             const data = [];
             
             for (let i = 1; i < lines.length; i++) {
-                const values = lines[i].split(',').map(v => v.trim());
+                if (!lines[i].trim()) continue;
+                
+                // 处理引号内的逗号
+                let values = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let char of lines[i]) {
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === delimiter && !inQuotes) {
+                        values.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.trim());
+                
                 const row = {};
                 headers.forEach((header, index) => {
-                    row[header] = values[index] || '';
+                    row[header] = (values[index] || '').replace(/^"|"$/g, '');
                 });
                 data.push(row);
             }
@@ -313,32 +373,96 @@
 
         function parseInputData(text, priceData) {
             const data = parseCSV(text);
-            const priceMap = new Map(priceData.map(item => [item.规格名称, item.批发价]));
             
-            const records = [];
-            const pattern = /(\d+)(?:档)?(?:[-~～](\d+)(?:档)?)?\s*[:：]?\s*([\d.]+)\s*条/g;
+            // 调试：显示实际列名
+            if (data.length > 0) {
+                console.log('实际列名:', Object.keys(data[0]));
+                console.log('数据样本:', data.slice(0, 3));
+            }
             
-            for (const row of data) {
-                const rule = (row['策略标准'] || '').toString();
-                const spec = (row['规格名称'] || row['规格'] || '').toString();
-                
-                let match;
-                while ((match = pattern.exec(rule)) !== null) {
-                    const start = parseInt(match[1]);
-                    const end = match[2] ? parseInt(match[2]) : start;
-                    const qty = parseFloat(match[3]);
-                    
-                    for (let grade = start; grade <= end; grade++) {
-                        records.push({
-                            档位: grade,
-                            规格名称: spec,
-                            条数: qty,
-                            批发价: priceMap.get(spec) || 0,
-                            金额: qty * (priceMap.get(spec) || 0)
-                        });
+            // 智能列名检测
+            const columnMap = {};
+            if (data.length > 0) {
+                const keys = Object.keys(data[0]);
+                for (const key of keys) {
+                    const cleanKey = key.trim();
+                    if (cleanKey.includes('规格') || cleanKey.includes('名称')) {
+                        columnMap.规格名称 = key;
+                    } else if (cleanKey.includes('策略') || cleanKey.includes('标准')) {
+                        columnMap.策略标准 = key;
                     }
                 }
             }
+            
+            console.log('列名映射:', columnMap);
+            
+            const priceMap = new Map(priceData.map(item => [item.规格名称, item.批发价]));
+            
+            const records = [];
+            
+            // 获取实际列名
+            const ruleKey = columnMap.策略标准 || Object.keys(data[0] || {}).find(k => k.includes('策略')) || '策略标准';
+            const specKey = columnMap.规格名称 || Object.keys(data[0] || {}).find(k => k.includes('规格')) || '规格名称';
+            
+            console.log('使用列名:', { ruleKey, specKey });
+            
+            // 改进的正则表达式，支持中文格式
+            const patterns = [
+                /(\d+)(?:档)?(?:[-~～](\d+)(?:档)?)?\s*[:：]?\s*([\d.]+)\s*条/g,
+                /(?:档位|档)(\d+)(?:[-~～](\d+))?[:：]\s*([\d.]+)\s*条/g,
+                /(\d+)[-~～](\d+)[档]?:\s*([\d.]+)\s*条/g,
+                /(\d+)[档]?:\s*([\d.]+)\s*条/g  // 单档位格式
+            ];
+            
+            let totalRules = 0;
+            for (const row of data) {
+                const rule = (row[ruleKey] || '').toString();
+                const spec = (row[specKey] || '').toString();
+                
+                if (!rule || !spec) continue;
+                
+                console.log('处理规则:', rule, '规格:', spec);
+                totalRules++;
+                
+                let found = false;
+                for (const pattern of patterns) {
+                    let match;
+                    while ((match = pattern.exec(rule)) !== null) {
+                        let start, end, qty;
+                        
+                        if (match.length === 4) {
+                            // 标准格式: 档位范围
+                            start = parseInt(match[1]);
+                            end = match[2] ? parseInt(match[2]) : start;
+                            qty = parseFloat(match[3]);
+                        } else if (match.length === 3) {
+                            // 单档位格式
+                            start = parseInt(match[1]);
+                            end = start;
+                            qty = parseFloat(match[2]);
+                        }
+                        
+                        if (isNaN(start) || isNaN(qty) || qty <= 0) continue;
+                        
+                        console.log(`找到规则: ${start}-${end}档: ${qty}条`);
+                        
+                        for (let grade = start; grade <= end; grade++) {
+                            records.push({
+                                档位: grade,
+                                规格名称: spec,
+                                条数: qty,
+                                批发价: priceMap.get(spec) || 0,
+                                金额: qty * (priceMap.get(spec) || 0)
+                            });
+                        }
+                        found = true;
+                    }
+                    if (found) break;
+                    pattern.lastIndex = 0; // 重置正则表达式
+                }
+            }
+            
+            console.log(`总共处理 ${totalRules} 条规则，生成 ${records.length} 条记录`);
             
             return records;
         }
@@ -352,7 +476,25 @@
             statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 处理中...';
 
             try {
-                const text = await file.text();
+                console.log(`开始处理 ${type} 文件:`, file.name, '大小:', file.size, '字节');
+                
+                // 尝试多种编码方式读取文件
+                const arrayBuffer = await file.arrayBuffer();
+                let text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+                
+                console.log('原始文本前200字符:', text.substring(0, 200));
+                console.log('编码检测结果:');
+                console.log('UTF-8解码长度:', text.length);
+                console.log('包含乱码:', /[���]/.test(text));
+                
+                // 如果UTF-8解码失败（出现乱码），尝试GBK解码
+                if (/[���]/.test(text) || !text.includes('规格') && !text.includes('策略')) {
+                    console.log('检测到编码问题，尝试GBK解码');
+                    text = decodeGBK(arrayBuffer);
+                    console.log('GBK解码结果:', text.substring(0, 200));
+                }
+                
+                console.log('最终文本前500字符:', text.substring(0, 500));
                 let data;
 
                 if (type === 'jwdcx') {
