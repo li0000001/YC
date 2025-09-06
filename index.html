@@ -202,41 +202,16 @@
     </div>
 
     <script>
-        // GBK/GB2312解码器
-        function decodeGBK(arrayBuffer) {
-            const bytes = new Uint8Array(arrayBuffer);
-            let result = '';
-            let i = 0;
-            
-            while (i < bytes.length) {
-                const byte1 = bytes[i];
-                
-                if (byte1 < 0x80) {
-                    // ASCII字符
-                    result += String.fromCharCode(byte1);
-                    i++;
-                } else if (byte1 >= 0x81 && byte1 <= 0xFE && i + 1 < bytes.length) {
-                    // GBK双字节字符
-                    const byte2 = bytes[i + 1];
-                    if (byte2 >= 0x40 && byte2 <= 0xFE && byte2 !== 0x7F) {
-                        // 使用GBK映射表（简化版）
-                        const code = (byte1 << 8) | byte2;
-                        try {
-                            result += String.fromCharCode(code);
-                        } catch (e) {
-                            result += '?';
-                        }
-                        i += 2;
-                    } else {
-                        result += '?';
-                        i++;
-                    }
-                } else {
-                    result += '?';
-                    i++;
-                }
-            }
-            return result;
+        // 使用FileReader API进行GBK解码
+        function readFileWithEncoding(file, encoding = 'GBK') {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    resolve(e.target.result);
+                };
+                reader.onerror = reject;
+                reader.readAsText(file, encoding);
+            });
         }
 
         // 数据存储
@@ -380,23 +355,27 @@
                 console.log('数据样本:', data.slice(0, 3));
             }
             
-            // 智能列名检测
-            const columnMap = {};
+            // 使用位置映射而不是名称映射（解决编码问题）
+            let specKey, ruleKey;
             if (data.length > 0) {
                 const keys = Object.keys(data[0]);
-                for (const key of keys) {
-                    const cleanKey = key.trim();
-                    if (cleanKey.includes('规格') || cleanKey.includes('名称')) {
-                        columnMap.规格名称 = key;
-                    } else if (cleanKey.includes('策略') || cleanKey.includes('标准')) {
-                        columnMap.策略标准 = key;
-                    }
+                console.log('检测到的列:', keys);
+                
+                // 根据位置映射列名
+                if (keys.length >= 2) {
+                    // 假设第2列是规格名称，第5列是策略标准（基于原始文件结构）
+                    specKey = keys[2] || keys[1]; // 第3列（索引2）
+                    ruleKey = keys[5] || keys[4]; // 第6列（索引5）
+                } else {
+                    // 回退到第一个和第二个列
+                    specKey = keys[1] || keys[0];
+                    ruleKey = keys[keys.length - 1] || keys[0];
                 }
             }
             
-            console.log('列名映射:', columnMap);
+            console.log('使用列名:', { specKey, ruleKey });
             
-            const priceMap = new Map(priceData.map(item => [item.规格名称, item.批发价]));
+            const priceMap = new Map(priceData.map(item => [item[Object.keys(item)[0]] || item.规格名称, item[Object.keys(item)[1]] || item.批发价]));
             
             const records = [];
             
@@ -478,23 +457,11 @@
             try {
                 console.log(`开始处理 ${type} 文件:`, file.name, '大小:', file.size, '字节');
                 
-                // 尝试多种编码方式读取文件
-                const arrayBuffer = await file.arrayBuffer();
-                let text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+                // 使用FileReader进行GBK解码
+                let text = await readFileWithEncoding(file, 'GBK');
                 
-                console.log('原始文本前200字符:', text.substring(0, 200));
-                console.log('编码检测结果:');
-                console.log('UTF-8解码长度:', text.length);
-                console.log('包含乱码:', /[���]/.test(text));
-                
-                // 如果UTF-8解码失败（出现乱码），尝试GBK解码
-                if (/[���]/.test(text) || !text.includes('规格') && !text.includes('策略')) {
-                    console.log('检测到编码问题，尝试GBK解码');
-                    text = decodeGBK(arrayBuffer);
-                    console.log('GBK解码结果:', text.substring(0, 200));
-                }
-                
-                console.log('最终文本前500字符:', text.substring(0, 500));
+                console.log('GBK解码结果前200字符:', text.substring(0, 200));
+                console.log('文件内容预览:', text.substring(0, 500));
                 let data;
 
                 if (type === 'jwdcx') {
