@@ -1,0 +1,16 @@
+{
+  "name": "tobacco-data-analyzer",
+  "version": "1.0.0",
+  "description": "烟草数据在线分析系统 - Cloudflare Workers版本",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "npm run build:client",
+    "build:client": "echo 'Building client...'"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

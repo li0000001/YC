@@ -1,0 +1,12 @@
+name = "tobacco-data-analyzer"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "npm run build"
+
+[env.production]
+name = "tobacco-data-analyzer"
+
+[site]
+bucket = "./public"
