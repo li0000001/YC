@@ -356,34 +356,35 @@
             }
             
             // 使用位置映射而不是名称映射（解决编码问题）
-            let specKey, ruleKey;
+            let specColumn, ruleColumn;
             if (data.length > 0) {
                 const keys = Object.keys(data[0]);
                 console.log('检测到的列:', keys);
                 
                 // 根据位置映射列名
-                if (keys.length >= 2) {
-                    // 假设第2列是规格名称，第5列是策略标准（基于原始文件结构）
-                    specKey = keys[2] || keys[1]; // 第3列（索引2）
-                    ruleKey = keys[5] || keys[4]; // 第6列（索引5）
+                if (keys.length >= 6) {
+                    specColumn = keys[2]; // 第3列通常是规格名称
+                    ruleColumn = keys[5]; // 第6列通常是策略标准
+                } else if (keys.length >= 2) {
+                    specColumn = keys[1]; // 第2列
+                    ruleColumn = keys[keys.length - 1]; // 最后一列
                 } else {
-                    // 回退到第一个和第二个列
-                    specKey = keys[1] || keys[0];
-                    ruleKey = keys[keys.length - 1] || keys[0];
+                    specColumn = keys[0];
+                    ruleColumn = keys[0];
                 }
             }
             
-            console.log('使用列名:', { specKey, ruleKey });
+            console.log('使用列名:', { specColumn, ruleColumn });
             
-            const priceMap = new Map(priceData.map(item => [item[Object.keys(item)[0]] || item.规格名称, item[Object.keys(item)[1]] || item.批发价]));
+            const priceMap = new Map(priceData.map(item => {
+                const keys = Object.keys(item);
+                return [item[keys[0]] || '', parseFloat(item[keys[1]]) || 0];
+            }));
             
             const records = [];
             
-            // 获取实际列名
-            const ruleKey = columnMap.策略标准 || Object.keys(data[0] || {}).find(k => k.includes('策略')) || '策略标准';
-            const specKey = columnMap.规格名称 || Object.keys(data[0] || {}).find(k => k.includes('规格')) || '规格名称';
-            
-            console.log('使用列名:', { ruleKey, specKey });
+            // 使用已定义的列名变量
+            console.log('使用列名:', { ruleColumn, specColumn });
             
             // 改进的正则表达式，支持中文格式
             const patterns = [
@@ -395,8 +396,8 @@
             
             let totalRules = 0;
             for (const row of data) {
-                const rule = (row[ruleKey] || '').toString();
-                const spec = (row[specKey] || '').toString();
+                const rule = (row[ruleColumn] || '').toString();
+                const spec = (row[specColumn] || '').toString();
                 
                 if (!rule || !spec) continue;
                 
